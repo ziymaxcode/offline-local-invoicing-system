@@ -1,0 +1,5 @@
+{
+  "name": "Ashiq Hardware Offline POS",
+  "description": "An offline-first desktop application for Ashiq Hardware to manage inventory, invoices, returns, and customers using local storage.",
+  "requestFramePermissions": []
+}
