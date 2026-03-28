@@ -12,7 +12,7 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'logo192.png', 'logo512.png'],
+        includeAssets: ['envoilogo.png', 'ezyinvoice.png', 'logo512.png'],
         manifest: {
           short_name: "Ezy Invoice",
           name: "Ezy Invoice Offline POS",
