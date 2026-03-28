@@ -144,7 +144,7 @@ export function Returns() {
     doc.text('RETURN RECEIPT', 14, 22);
     
     doc.setFontSize(10);
-    doc.text('Ashiq Hardware', 14, 30);
+    doc.text('Ezy Invoice', 14, 30);
     doc.text('Offline POS System', 14, 35);
     
     doc.text(`Receipt #: RET-${transactionId.toString().padStart(6, '0')}`, 140, 22);

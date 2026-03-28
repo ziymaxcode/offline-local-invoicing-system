@@ -18,9 +18,13 @@ export function Layout() {
     <div className="flex h-screen bg-zinc-50 text-zinc-900 font-sans">
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r border-zinc-200 flex flex-col">
-        <div className="p-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Ezy Invoice</h1>
-        </div>
+        <div className="p-6 flex items-center justify-center">
+  <img 
+    src="/ezyinvoice.png" 
+    alt="Ezy Invoice" 
+    className="h-15 w-auto object-contain"
+  />
+</div>
         <nav className="flex-1 px-4 space-y-1">
           {navItems.map((item) => {
             const isActive = location.pathname === item.href || (item.href === '/' && location.pathname === '');
@@ -44,7 +48,7 @@ export function Layout() {
         <div className="p-4 border-t border-zinc-100">
           <div className="flex items-center">
             <div className="w-8 h-8 rounded-full bg-zinc-200 flex items-center justify-center text-sm font-medium text-zinc-600">
-              AH
+              EZ
             </div>
             <div className="ml-3">
               <p className="text-sm font-medium text-zinc-900">Admin</p>
