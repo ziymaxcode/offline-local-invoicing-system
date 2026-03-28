@@ -14,11 +14,11 @@ export default defineConfig(({mode}) => {
         registerType: 'autoUpdate',
         includeAssets: ['envoilogo.png', 'ezyinvoice.png', 'logo512.png'],
         manifest: {
-          short_name: "Ezy Invoice",
-          name: "Ezy Invoice Offline POS",
+          short_name: "EzyInvoice",
+          name: "EzyInvoice Offline Ledger",
           icons: [
             {
-              src: "favicon.ico",
+              src: "envoilogo.png",
               sizes: "64x64 32x32 24x24 16x16",
               type: "image/x-icon"
             },
