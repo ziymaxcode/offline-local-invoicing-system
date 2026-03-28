@@ -148,7 +148,11 @@ export function EditInvoiceModal({ invoiceId, onClose }: EditInvoiceModalProps) 
         const itemNames = cart.map(i => i.product.name);
         const detailsText = `Sale (Edited): ${itemNames.slice(0, 2).join(', ')}${itemNames.length > 2 ? '...' : ''}`;
         
-        const tx = await db.transactions.where({ invoiceId }).first();
+        const txs = await db.transactions
+          .where('customerId')
+          .equals(customer.id!)
+          .toArray();
+        const tx = txs.find(t => t.invoiceId === invoiceId);
         if (tx) {
           await db.transactions.update(tx.id!, {
             amount: totalAmount,
