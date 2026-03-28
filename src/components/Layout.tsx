@@ -52,7 +52,7 @@ export function Layout() {
             </div>
             <div className="ml-3">
               <p className="text-sm font-medium text-zinc-900">Admin</p>
-              <p className="text-xs text-zinc-500">Offline Mode</p>
+              {/* <p className="text-xs text-zinc-500">Offline Mode</p> */}
             </div>
           </div>
         </div>
