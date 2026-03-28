@@ -1,7 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Product } from '@/src/db/db';
-import { Plus, Search, Trash2, Undo2, UserPlus, ShoppingCart } from 'lucide-react';
+import { db, type Product, type Invoice } from '@/src/db/db';
+import { Plus, Search, Trash2, Undo2, UserPlus, ShoppingCart, FileText, Printer } from 'lucide-react';
+import { format } from 'date-fns';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface ReturnItem {
   product: Product;
@@ -11,11 +14,60 @@ interface ReturnItem {
 
 export function Returns() {
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | ''>('');
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState<ReturnItem[]>([]);
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+  const [invoiceProducts, setInvoiceProducts] = useState<Record<number, Product>>({});
 
   const customers = useLiveQuery(() => db.customers.toArray());
+  
+  const customerInvoices = useLiveQuery(
+    () => {
+      if (!selectedCustomerId) return [];
+      return db.invoices
+        .where('customerId')
+        .equals(Number(selectedCustomerId))
+        .reverse()
+        .sortBy('date');
+    },
+    [selectedCustomerId]
+  );
+
+  const selectedInvoice = useMemo(() => {
+    return customerInvoices?.find(inv => inv.id === selectedInvoiceId);
+  }, [customerInvoices, selectedInvoiceId]);
+
+  const customerProductHistory = useMemo(() => {
+    if (!customerInvoices) return {};
+    const history: Record<number, number[]> = {};
+    customerInvoices.forEach(inv => {
+      inv.items.forEach(item => {
+        if (!history[item.productId]) {
+          history[item.productId] = [];
+        }
+        if (!history[item.productId].includes(item.price)) {
+          history[item.productId].push(item.price);
+        }
+      });
+    });
+    return history;
+  }, [customerInvoices]);
+
+  useEffect(() => {
+    if (selectedInvoice) {
+      const loadProducts = async () => {
+        const productIds = selectedInvoice.items.map(item => item.productId);
+        const products = await db.products.where('id').anyOf(productIds).toArray();
+        const productMap = products.reduce((acc, p) => ({ ...acc, [p.id!]: p }), {});
+        setInvoiceProducts(productMap);
+      };
+      loadProducts();
+    } else {
+      setInvoiceProducts({});
+    }
+  }, [selectedInvoice]);
+
   const products = useLiveQuery(
     () => {
       if (searchQuery) {
@@ -52,7 +104,7 @@ export function Returns() {
     setIsCustomerModalOpen(false);
   };
 
-  const addToCart = (product: Product) => {
+  const addToCart = (product: Product, defaultPrice?: number) => {
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {
@@ -62,7 +114,7 @@ export function Returns() {
             : item
         );
       }
-      return [...prev, { product, quantity: 1, price: product.price }];
+      return [...prev, { product, quantity: 1, price: defaultPrice ?? product.price }];
     });
     setSearchQuery('');
   };
@@ -85,6 +137,45 @@ export function Returns() {
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
+  const generateReturnPDF = (transactionId: number, customer: any) => {
+    const doc = new jsPDF();
+    
+    doc.setFontSize(20);
+    doc.text('RETURN RECEIPT', 14, 22);
+    
+    doc.setFontSize(10);
+    doc.text('Ashiq Hardware', 14, 30);
+    doc.text('Offline POS System', 14, 35);
+    
+    doc.text(`Receipt #: RET-${transactionId.toString().padStart(6, '0')}`, 140, 22);
+    doc.text(`Date: ${format(new Date(), 'dd MMM yyyy')}`, 140, 27);
+    
+    doc.setFontSize(12);
+    doc.text('Customer:', 14, 50);
+    doc.setFontSize(10);
+    doc.text(customer.name, 14, 56);
+    doc.text(`Phone: ${customer.phone}`, 14, 61);
+
+    const tableBody = cart.map(item => [
+      item.product.name,
+      item.quantity.toString(),
+      `Rs. ${item.price.toFixed(2)}`,
+      `Rs. ${(item.quantity * item.price).toFixed(2)}`
+    ]);
+
+    autoTable(doc, {
+      startY: 70,
+      head: [['Item Description', 'Qty', 'Refund Price', 'Total Credit']],
+      body: tableBody,
+      theme: 'grid',
+      headStyles: { fillColor: [5, 150, 105] }, // emerald-600
+      foot: [['', '', 'Total Credit:', `Rs. ${totalAmount.toFixed(2)}`]],
+      footStyles: { fillColor: [250, 250, 250], textColor: [24, 24, 27], fontStyle: 'bold' }
+    });
+
+    doc.save(`Return_${customer.name.replace(/\s+/g, '_')}_${format(new Date(), 'yyyyMMdd')}.pdf`);
+  };
+
   const handleCompleteReturn = async () => {
     if (!selectedCustomerId || cart.length === 0) {
       alert('Please select a customer and add items to return.');
@@ -95,18 +186,19 @@ export function Returns() {
     if (!customer) return;
 
     try {
+      let newTxId: number = 0;
       await db.transaction('rw', db.transactions, db.customers, db.products, async () => {
         // 1. Create Ledger Transaction (Credit)
         const itemNames = cart.map(i => i.product.name);
         const detailsText = `Return: ${itemNames.slice(0, 2).join(', ')}${itemNames.length > 2 ? '...' : ''}`;
         
-        await db.transactions.add({
+        newTxId = await db.transactions.add({
           customerId: customer.id!,
           type: 'return',
           amount: totalAmount, // Credit decreases balance (you owe customer or settled)
           details: detailsText,
           date: new Date()
-        });
+        }) as number;
 
         // 2. Update Customer Balance (Subtracting the return amount)
         await db.customers.update(customer.id!, {
@@ -131,6 +223,10 @@ export function Returns() {
         setSearchQuery('');
         alert('Return processed successfully! Stock and ledger updated.');
       });
+
+      if (newTxId) {
+        generateReturnPDF(newTxId, customer);
+      }
     } catch (error) {
       console.error('Failed to process return:', error);
       alert('An error occurred while processing the return. Please try again.');
@@ -162,7 +258,10 @@ export function Returns() {
             </div>
             <select
               value={selectedCustomerId}
-              onChange={(e) => setSelectedCustomerId(e.target.value === '' ? '' : Number(e.target.value))}
+              onChange={(e) => {
+                setSelectedCustomerId(e.target.value === '' ? '' : Number(e.target.value));
+                setSelectedInvoiceId('');
+              }}
               className="block w-full rounded-xl border-0 py-2.5 pl-3 pr-10 text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:ring-2 focus:ring-zinc-900 sm:text-sm sm:leading-6"
             >
               <option value="">-- Select a Customer --</option>
@@ -171,6 +270,67 @@ export function Returns() {
               ))}
             </select>
           </div>
+
+          {/* Return from Invoice */}
+          {selectedCustomerId && customerInvoices && customerInvoices.length > 0 && (
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-100">
+              <h2 className="text-lg font-medium text-zinc-900 mb-4 flex items-center">
+                <FileText className="h-5 w-5 mr-2 text-zinc-500" />
+                Return from Specific Invoice (Optional)
+              </h2>
+              <select
+                value={selectedInvoiceId}
+                onChange={(e) => setSelectedInvoiceId(e.target.value === '' ? '' : Number(e.target.value))}
+                className="block w-full rounded-xl border-0 py-2.5 pl-3 pr-10 text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:ring-2 focus:ring-zinc-900 sm:text-sm sm:leading-6 mb-4"
+              >
+                <option value="">-- Do not link to a specific invoice --</option>
+                {customerInvoices.map(inv => (
+                  <option key={inv.id} value={inv.id}>
+                    INV-{inv.id?.toString().padStart(6, '0')} - {format(inv.date, 'dd MMM yyyy')} - ₹{inv.totalAmount.toFixed(2)}
+                  </option>
+                ))}
+              </select>
+
+              {selectedInvoice && (
+                <div className="border border-zinc-100 rounded-xl overflow-hidden mt-4">
+                  <div className="bg-zinc-50 px-4 py-2 border-b border-zinc-100">
+                    <p className="text-xs font-medium text-zinc-500 uppercase">Items in Invoice INV-{selectedInvoice.id?.toString().padStart(6, '0')}</p>
+                  </div>
+                  <ul className="divide-y divide-zinc-100 max-h-64 overflow-y-auto">
+                    {selectedInvoice.items.map((item, idx) => {
+                      const product = invoiceProducts[item.productId];
+                      if (!product) return null;
+                      return (
+                        <li key={idx} className="flex items-center justify-between p-3 hover:bg-zinc-50 transition-colors">
+                          <div>
+                            <p className="text-sm font-medium text-zinc-900">{product.name}</p>
+                            <div className="flex items-center space-x-3 mt-1">
+                              <p className="text-xs text-zinc-500">
+                                <span className="font-medium text-zinc-700">Billed at:</span> ₹{item.price}
+                              </p>
+                              <p className="text-xs text-zinc-500">
+                                <span className="font-medium text-zinc-700">Current Price:</span> ₹{product.price}
+                              </p>
+                              <p className="text-xs text-zinc-500">
+                                Qty: {item.quantity}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => addToCart(product, item.price)}
+                            className="p-1.5 rounded-lg bg-zinc-100 text-zinc-600 hover:bg-zinc-200 transition-colors"
+                            title="Add to return list"
+                          >
+                            <Plus className="h-4 w-4" />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Product Search & Add */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-100">
@@ -191,21 +351,60 @@ export function Returns() {
             {/* Search Results */}
             {searchQuery && products && products.length > 0 && (
               <div className="border border-zinc-100 rounded-xl overflow-hidden mb-6">
-                <ul className="divide-y divide-zinc-100 max-h-48 overflow-y-auto">
-                  {products.map(product => (
-                    <li key={product.id} className="flex items-center justify-between p-3 hover:bg-zinc-50 transition-colors">
-                      <div>
-                        <p className="text-sm font-medium text-zinc-900">{product.name}</p>
-                        <p className="text-xs text-zinc-500">Current Stock: {product.stock} | ₹{product.price}</p>
-                      </div>
-                      <button
-                        onClick={() => addToCart(product)}
-                        className="p-1.5 rounded-lg bg-zinc-100 text-zinc-600 hover:bg-zinc-200 transition-colors"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </li>
-                  ))}
+                <ul className="divide-y divide-zinc-100 max-h-64 overflow-y-auto">
+                  {products.map(product => {
+                    const pastPrices = customerProductHistory[product.id!] || [];
+                    return (
+                      <li key={product.id} className="flex items-center justify-between p-3 hover:bg-zinc-50 transition-colors">
+                        <div>
+                          <p className="text-sm font-medium text-zinc-900">{product.name}</p>
+                          <div className="flex items-center space-x-3 mt-1">
+                            <p className="text-xs text-zinc-500">
+                              <span className="font-medium text-zinc-700">Current Price:</span> ₹{product.price}
+                            </p>
+                            <p className="text-xs text-zinc-500">
+                              <span className="font-medium text-zinc-700">Stock:</span> {product.stock}
+                            </p>
+                            {pastPrices.length > 0 && (
+                              <p className="text-xs text-emerald-600 font-medium">
+                                Past Billed: {pastPrices.map(p => `₹${p}`).join(', ')}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {pastPrices.length > 0 ? (
+                            <>
+                              {pastPrices.map((price, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => addToCart(product, price)}
+                                  className="px-2 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-medium transition-colors"
+                                  title={`Return at past billed price ₹${price}`}
+                                >
+                                  Add @ ₹{price}
+                                </button>
+                              ))}
+                              <button
+                                onClick={() => addToCart(product, product.price)}
+                                className="px-2 py-1.5 rounded-lg bg-zinc-100 text-zinc-700 hover:bg-zinc-200 text-xs font-medium transition-colors"
+                                title="Return at current inventory price"
+                              >
+                                Add @ ₹{product.price}
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => addToCart(product)}
+                              className="p-1.5 rounded-lg bg-zinc-100 text-zinc-600 hover:bg-zinc-200 transition-colors"
+                            >
+                              <Plus className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
@@ -297,8 +496,8 @@ export function Returns() {
               disabled={!selectedCustomerId || cart.length === 0}
               className="w-full flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              <Undo2 className="mr-2 h-4 w-4" />
-              Process Return
+              <Printer className="mr-2 h-4 w-4" />
+              Process & Print Return
             </button>
           </div>
         </div>

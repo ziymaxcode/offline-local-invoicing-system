@@ -1,13 +1,56 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import * as XLSX from 'xlsx';
 import { db, type Product } from '@/src/db/db';
-import { Plus, Search, Edit2, Trash2, AlertCircle } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, AlertCircle, Upload } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 
 export function Inventory() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = new Uint8Array(event.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet) as any[];
+
+        const productsToAdd = jsonData.map(row => ({
+          name: row.name || row.Name || '',
+          sku: row.sku || row.SKU || '',
+          category: row.category || row.Category || 'General',
+          price: Number(row.price || row.Price || 0),
+          stock: Number(row.stock || row.Stock || 0),
+          minStock: Number(row.minStock || row['Min Stock'] || 5),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })).filter(p => p.name && p.sku);
+
+        if (productsToAdd.length > 0) {
+          await db.products.bulkAdd(productsToAdd);
+          alert(`Successfully imported ${productsToAdd.length} products!`);
+        } else {
+          alert('No valid products found in the Excel file. Please ensure columns are named correctly (name, sku, category, price, stock, minStock).');
+        }
+      } catch (error) {
+        console.error('Error parsing Excel file:', error);
+        alert('Failed to parse Excel file. Please check the format.');
+      }
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
 
   const products = useLiveQuery(
     () => {
@@ -74,13 +117,29 @@ export function Inventory() {
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Manage Products</h1>
           <p className="text-sm text-zinc-500 mt-1">View and manage your hardware inventory.</p>
         </div>
-        <button
-          onClick={openAddModal}
-          className="inline-flex items-center justify-center rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:ring-offset-2 transition-colors"
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Add Product
-        </button>
+        <div className="flex items-center space-x-3">
+          <input 
+            type="file" 
+            accept=".xlsx, .xls, .csv" 
+            className="hidden" 
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 shadow-sm ring-1 ring-inset ring-zinc-300 hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:ring-offset-2 transition-colors"
+          >
+            <Upload className="mr-2 h-4 w-4" />
+            Import Excel
+          </button>
+          <button
+            onClick={openAddModal}
+            className="inline-flex items-center justify-center rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:ring-offset-2 transition-colors"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add Product
+          </button>
+        </div>
       </div>
 
       {/* Filters and Search */}

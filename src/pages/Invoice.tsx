@@ -19,6 +19,7 @@ export function Invoice() {
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+  const [invoiceDate, setInvoiceDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
 
   const customers = useLiveQuery(() => db.customers.toArray());
   const products = useLiveQuery(
@@ -103,7 +104,7 @@ export function Invoice() {
     
     // Invoice Details
     doc.text(`Invoice #: INV-${invoiceId.toString().padStart(6, '0')}`, 140, 22);
-    doc.text(`Date: ${format(new Date(), 'dd MMM yyyy')}`, 140, 27);
+    doc.text(`Date: ${format(new Date(invoiceDate), 'dd MMM yyyy')}`, 140, 27);
     
     // Customer Details
     doc.setFontSize(12);
@@ -144,12 +145,13 @@ export function Invoice() {
     if (!customer) return;
 
     try {
+      const selectedDate = new Date(invoiceDate);
       await db.transaction('rw', db.invoices, db.transactions, db.customers, db.products, async () => {
         // 1. Create Invoice
         const invoiceId = await db.invoices.add({
           customerId: customer.id!,
           totalAmount,
-          date: new Date(),
+          date: selectedDate,
           items: cart.map(item => ({
             productId: item.product.id!,
             quantity: item.quantity,
@@ -166,7 +168,8 @@ export function Invoice() {
           type: 'invoice',
           amount: totalAmount, // Debit increases balance (customer owes you)
           details: detailsText,
-          date: new Date()
+          date: selectedDate,
+          invoiceId: invoiceId as number
         });
 
         // 3. Update Customer Balance
@@ -209,6 +212,17 @@ export function Invoice() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Create Invoice</h1>
         <p className="text-sm text-zinc-500 mt-1">Record a sale, update ledger, and generate a PDF invoice.</p>
+      </div>
+
+      <div className="flex items-center space-x-4 bg-white p-4 rounded-2xl shadow-sm border border-zinc-100">
+        <label htmlFor="invoiceDate" className="text-sm font-medium text-zinc-700">Invoice Date:</label>
+        <input
+          type="date"
+          id="invoiceDate"
+          value={invoiceDate}
+          onChange={(e) => setInvoiceDate(e.target.value)}
+          className="rounded-xl border-0 py-2 px-3 text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:ring-2 focus:ring-zinc-900 sm:text-sm"
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

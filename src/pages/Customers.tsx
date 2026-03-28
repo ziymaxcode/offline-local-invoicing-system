@@ -1,14 +1,21 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Customer, type Transaction } from '@/src/db/db';
-import { Search, UserPlus, ArrowUpRight, ArrowDownLeft, FileText, Undo2 } from 'lucide-react';
+import { Search, UserPlus, ArrowUpRight, ArrowDownLeft, FileText, Undo2, Edit2, Printer } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { format } from 'date-fns';
+import { EditInvoiceModal } from '@/src/components/EditInvoiceModal';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 export function Customers() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [printStartDate, setPrintStartDate] = useState('');
+  const [printEndDate, setPrintEndDate] = useState('');
 
   const customers = useLiveQuery(
     () => {
@@ -59,6 +66,65 @@ export function Customers() {
 
     setSelectedCustomerId(id);
     setIsCustomerModalOpen(false);
+  };
+
+  const handlePrintLedger = () => {
+    if (!selectedCustomer) return;
+    const doc = new jsPDF();
+    
+    let filteredTxs = transactions || [];
+    if (printStartDate) {
+      const start = new Date(printStartDate);
+      start.setHours(0,0,0,0);
+      filteredTxs = filteredTxs.filter(tx => tx.date >= start);
+    }
+    if (printEndDate) {
+      const end = new Date(printEndDate);
+      end.setHours(23,59,59,999);
+      filteredTxs = filteredTxs.filter(tx => tx.date <= end);
+    }
+
+    doc.setFontSize(20);
+    doc.text('CUSTOMER LEDGER', 14, 22);
+    
+    doc.setFontSize(10);
+    doc.text('Ashiq Hardware', 14, 30);
+    
+    doc.setFontSize(12);
+    doc.text(`Customer: ${selectedCustomer.name}`, 14, 45);
+    doc.setFontSize(10);
+    doc.text(`Phone: ${selectedCustomer.phone}`, 14, 51);
+    if (selectedCustomer.address) {
+      doc.text(`Address: ${selectedCustomer.address}`, 14, 56);
+    }
+    
+    const balanceText = selectedCustomer.currentBalance > 0 ? 'Customer owes you' : selectedCustomer.currentBalance < 0 ? 'You owe customer' : 'Settled';
+    doc.text(`Current Balance: Rs. ${Math.abs(selectedCustomer.currentBalance).toFixed(2)} (${balanceText})`, 140, 45);
+    
+    let dateRangeText = 'All Time';
+    if (printStartDate && printEndDate) dateRangeText = `${format(new Date(printStartDate), 'dd MMM yyyy')} to ${format(new Date(printEndDate), 'dd MMM yyyy')}`;
+    else if (printStartDate) dateRangeText = `From ${format(new Date(printStartDate), 'dd MMM yyyy')}`;
+    else if (printEndDate) dateRangeText = `Until ${format(new Date(printEndDate), 'dd MMM yyyy')}`;
+    doc.text(`Period: ${dateRangeText}`, 140, 51);
+
+    const tableBody = filteredTxs.map(tx => [
+      format(tx.date, 'dd MMM yyyy'),
+      tx.type === 'invoice' ? 'Sale' : tx.type === 'return' ? 'Return' : 'Payment',
+      tx.details,
+      tx.type === 'invoice' ? `Rs. ${tx.amount.toFixed(2)}` : '-',
+      tx.type !== 'invoice' ? `Rs. ${tx.amount.toFixed(2)}` : '-'
+    ]);
+
+    autoTable(doc, {
+      startY: 65,
+      head: [['Date', 'Type', 'Details', 'Debit (+)', 'Credit (-)']],
+      body: tableBody,
+      theme: 'grid',
+      headStyles: { fillColor: [24, 24, 27] }
+    });
+
+    doc.save(`Ledger_${selectedCustomer.name.replace(/\s+/g, '_')}.pdf`);
+    setIsPrintModalOpen(false);
   };
 
   return (
@@ -149,6 +215,13 @@ export function Customers() {
                 <p className="text-xs text-zinc-500 mt-1">
                   {selectedCustomer.currentBalance > 0 ? 'Customer owes you' : selectedCustomer.currentBalance < 0 ? 'You owe customer' : 'Fully settled'}
                 </p>
+                <button
+                  onClick={() => setIsPrintModalOpen(true)}
+                  className="mt-3 w-full flex items-center justify-center rounded-lg bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-200 transition-colors"
+                >
+                  <Printer className="mr-1.5 h-3.5 w-3.5" />
+                  Print Ledger
+                </button>
               </div>
             </div>
 
@@ -185,13 +258,21 @@ export function Customers() {
                           <p className="text-xs text-zinc-400 mt-1">{format(tx.date, 'dd MMM yyyy, hh:mm a')}</p>
                         </div>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right flex flex-col items-end">
                         <p className={cn(
                           "text-base font-semibold",
                           tx.type === 'invoice' ? "text-red-600" : "text-emerald-600"
                         )}>
                           {tx.type === 'invoice' ? '+' : '-'} ₹{tx.amount.toFixed(2)}
                         </p>
+                        {tx.type === 'invoice' && tx.invoiceId && (
+                          <button
+                            onClick={() => setEditingInvoiceId(tx.invoiceId!)}
+                            className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800 flex items-center transition-colors"
+                          >
+                            <Edit2 className="h-3 w-3 mr-1" /> Edit Bill
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -265,6 +346,66 @@ export function Customers() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Edit Invoice Modal */}
+      {editingInvoiceId && (
+        <EditInvoiceModal
+          invoiceId={editingInvoiceId}
+          onClose={() => setEditingInvoiceId(null)}
+        />
+      )}
+
+      {/* Print Ledger Modal */}
+      {isPrintModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/20 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-zinc-900">Print Ledger</h2>
+              <button 
+                onClick={() => setIsPrintModalOpen(false)}
+                className="text-zinc-400 hover:text-zinc-900 text-2xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-zinc-500">Select a date range to print, or leave blank for full history.</p>
+              <div>
+                <label className="block text-sm font-medium text-zinc-700">Start Date</label>
+                <input
+                  type="date"
+                  value={printStartDate}
+                  onChange={(e) => setPrintStartDate(e.target.value)}
+                  className="mt-1 block w-full rounded-xl border-0 py-2 px-3 text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:ring-2 focus:ring-inset focus:ring-zinc-900 sm:text-sm sm:leading-6"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-700">End Date</label>
+                <input
+                  type="date"
+                  value={printEndDate}
+                  onChange={(e) => setPrintEndDate(e.target.value)}
+                  className="mt-1 block w-full rounded-xl border-0 py-2 px-3 text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:ring-2 focus:ring-inset focus:ring-zinc-900 sm:text-sm sm:leading-6"
+                />
+              </div>
+              <div className="pt-4 flex justify-end space-x-3">
+                <button
+                  onClick={() => setIsPrintModalOpen(false)}
+                  className="rounded-xl px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handlePrintLedger}
+                  className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-zinc-800 transition-colors flex items-center"
+                >
+                  <Printer className="mr-2 h-4 w-4" />
+                  Print PDF
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

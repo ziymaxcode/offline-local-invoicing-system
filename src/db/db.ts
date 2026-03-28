@@ -29,6 +29,7 @@ export interface Transaction {
   amount: number;
   details: string;
   date: Date;
+  invoiceId?: number;
 }
 
 export interface Invoice {

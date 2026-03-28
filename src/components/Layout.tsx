@@ -19,7 +19,7 @@ export function Layout() {
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r border-zinc-200 flex flex-col">
         <div className="p-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Ashiq Hardware</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Ezy Invoice</h1>
         </div>
         <nav className="flex-1 px-4 space-y-1">
           {navItems.map((item) => {
